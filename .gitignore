@@ -1,4 +1,4 @@
 .ipynb_checkpoints/
 data/
-./while_train_list
-./new_init_list
+while_train_list
+new_init_list

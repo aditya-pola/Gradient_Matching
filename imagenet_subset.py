@@ -13,35 +13,31 @@ from sklearn.model_selection import train_test_split
 import numpy as np
 from typing import List
 
-data = datasets.MNIST(
+data = datasets.ImageNet(
     root = '~/Documents/Code/Gradient_Matching/data',
-    train = True,
+    split = 'train',
     transform = ToTensor(), 
-    download = True,            
 )
 
-test_data = datasets.MNIST(
+test_data = datasets.ImageNet(
     root = '~/Documents/Code/Gradient_Matching/data',
-    train = False,
+    split = 'test',
     transform = ToTensor(), 
-    download = True,            
 )
 
-SUBSET_CLASS_SIZE = 1
 batch_size = 6000
 # data = ConcatDataset([train_data, test_data])
 data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
-data_loader_1by1 = DataLoader(data, batch_size=1, shuffle=False)
 
 # Split the indices in a stratified way
 indices = np.arange(len(data))
-# train_indices, test_indices = train_test_split(indices, train_size=100*10, stratify=data.targets, random_state=random.randint(0,1000))
+train_indices, test_indices = train_test_split(indices, train_size=100*10, stratify=data.targets, random_state=42)
 
-# # Warp into Subsets and DataLoaders
-# train_subset = Subset(data, train_indices)
-# subset_loader = DataLoader(train_subset, batch_size=1, shuffle=False)
+# Warp into Subsets and DataLoaders
+train_subset = Subset(data, train_indices)
+subset_loader = DataLoader(train_subset, batch_size=1, shuffle=False)
 
-# full_subset_loader = DataLoader(train_subset, batch_size=1000, shuffle=False)
+fullset_loader = DataLoader(train_subset, batch_size=1000, shuffle=False)
 
 test_dataloader = DataLoader(test_data, batch_size=1000, shuffle=False)
 
@@ -99,7 +95,7 @@ def pick_subset(mean_gradient: torch.Tensor, sample_grads: List[torch.Tensor]) -
 
     top_1000 = []
     for label in range(10):
-        dummy = SUBSET_CLASS_SIZE
+        dummy = 100
         for tup in zipped_list:
             if dummy == 0:
                 break
@@ -222,18 +218,18 @@ def test(model, test_dataloader=test_dataloader):
     return [accuracy, classwise_accuracy]
 
 
-def with_new_init(epochs=50):
+def with_new_init():
     """
     Returns a list of lists that are top 1000 indices with 50 different initializations of the model
     """
 
     list_of_lists = [] #Stores lists of top 100 indices lists for rank aggregatio later
 
-    for epoch in range(epochs):
-        torch.manual_seed(random.randint(0,1000))
+    for epoch in range(50):
+        torch.manual_seed(epoch)
         fullset_model = SimpleCNN()
-        mean_grad = mean_gradient(fullset_model, data_loader)
-        sample_wise_gradients = subset_forward_pass_grads(fullset_model, data_loader_1by1)
+        mean_grad = mean_gradient(fullset_model, fullset_loader)
+        sample_wise_gradients = subset_forward_pass_grads(fullset_model, subset_loader)
 
         top_1000 = pick_subset(mean_grad, sample_wise_gradients)
         list_of_lists.append(top_1000)
@@ -243,7 +239,7 @@ def with_new_init(epochs=50):
     return list_of_lists
 
 
-def with_train(epochs=50):
+def with_train():
     """
     Returns a list of lists where each list is top 1000 indices using cosine distance of mean gradient obtained after each epoch of full model training
     """
@@ -252,9 +248,9 @@ def with_train(epochs=50):
     fullset_optimizer = torch.optim.Adam(params=fullset_model.parameters(), lr=0.01)
     list_of_lists = [] #Stores lists of top 100 indices lists for rank aggregatio later
 
-    for epoch in range(epochs):
-        mean_grad = mean_gradient(fullset_model, data_loader)
-        sample_wise_gradients = subset_forward_pass_grads(fullset_model, data_loader_1by1)
+    for epoch in range(50):
+        mean_grad = mean_gradient(fullset_model, fullset_loader)
+        sample_wise_gradients = subset_forward_pass_grads(fullset_model, subset_loader)
 
         top_1000 = pick_subset(mean_grad, sample_wise_gradients)
         list_of_lists.append(top_1000)
@@ -269,7 +265,7 @@ def with_train(epochs=50):
 
         # t1_accuracy, t1_class_accuracy = test(t1_model)
 
-        fullset_model = full_model_train(fullset_model, dataloader=data_loader, optimizer=fullset_optimizer)
+        fullset_model = full_model_train(fullset_model, dataloader=fullset_loader, optimizer=fullset_optimizer)
 
         print(f"Epoch: {epoch} of finding subset while training full model", end='\r')
         # print(f"--------------EPOCH: {epoch}--------------")
@@ -297,7 +293,7 @@ def rank_aggregation(list_of_lists):
     freq_dict = Counter(chain.from_iterable((list_of_lists)))
     ordered_freq_list_indices = freq_dict.most_common()
 
-    index_class_dict = {i:int(data.targets[i]) for i, index in enumerate(data.targets)}
+    index_class_dict = {i:int(data.targets[i]) for i in data.targets}
 
     super_list = []
 
@@ -308,7 +304,7 @@ def rank_aggregation(list_of_lists):
                 super_list.append(item[0])
                 count += 1
 
-            if count == SUBSET_CLASS_SIZE:
+            if count == 100:
                 break
     return super_list
 
@@ -320,9 +316,9 @@ big_random_acc_classwise = []
 for test_no in range(10):
     torch.manual_seed(random.randint(1,500))
     random_model = SimpleCNN()
-    random_indices, random_test_indices = train_test_split(indices, train_size=SUBSET_CLASS_SIZE*10, stratify=data.targets, random_state=random.randint(1,500))
+    random_indices, random_test_indices = train_test_split(indices, train_size=100*10, stratify=data.targets, random_state=random.randint(1,500))
     random_subset = Subset(data, random_indices)
-    random_loader = DataLoader(random_subset, batch_size=SUBSET_CLASS_SIZE*10, shuffle=False)
+    random_loader = DataLoader(random_subset, batch_size=1000, shuffle=False)
     random_optimizer = torch.optim.Adam(random_model.parameters(), lr=0.01)
 
     print(f"Iteration {test_no+1} of training on random subset", end='\r')
@@ -344,15 +340,15 @@ parser.add_argument("-n", "--number", required=True, help = "With different init
 args = parser.parse_args()
 
 if int(args.number) == 1:
-    list_of_lists = with_new_init(epochs=30)
+    list_of_lists = with_new_init()
     top_1000 = rank_aggregation(list_of_lists)
 
     t1_model = SimpleCNN()
     t1_subset = Subset(data, top_1000)
-    t1_loader = DataLoader(t1_subset, batch_size=SUBSET_CLASS_SIZE*10, shuffle=False)
+    t1_loader = DataLoader(t1_subset, batch_size=1000, shuffle=False)
     t1_optimizer = torch.optim.Adam(t1_model.parameters(), lr=0.01)
 
-    t1_model = subset_train(t1_model, t1_loader, t1_optimizer, epochs=30)
+    t1_model = subset_train(t1_model, t1_loader, t1_optimizer, epochs=50)
 
     t1_accuracy, t1_class_accuracy = test(t1_model)
 
@@ -363,18 +359,18 @@ if int(args.number) == 1:
 
     #Saving list_of_lists for lat comparisons
     with open("new_init_list", "wb") as f:
-        pickle.dump(top_1000, f)
+        pickle.dump(list_of_lists, f)
 
 elif int(args.number) == 2:
-    list_of_lists = with_train(epochs=30)
+    list_of_lists = with_train()
     top_1000 = rank_aggregation(list_of_lists)
 
     t1_model = SimpleCNN()
     t1_subset = Subset(data, top_1000)
-    t1_loader = DataLoader(t1_subset, batch_size=SUBSET_CLASS_SIZE*10, shuffle=False)
+    t1_loader = DataLoader(t1_subset, batch_size=1000, shuffle=False)
     t1_optimizer = torch.optim.Adam(t1_model.parameters(), lr=0.01)
 
-    t1_model = subset_train(t1_model, t1_loader, t1_optimizer, epochs=30)
+    t1_model = subset_train(t1_model, t1_loader, t1_optimizer, epochs=50)
 
     t1_accuracy, t1_class_accuracy = test(t1_model)
 
@@ -384,7 +380,7 @@ elif int(args.number) == 2:
     print("Classwise accuracy metrics using random subset:", random_class_accuracy)
 
     with open("while_train_list", "wb") as f:
-        pickle.dump(top_1000, f)
+        pickle.dump(list_of_lists, f)
 
 else:
     print("Valid arguments include only '1' and '2'")
@@ -392,7 +388,7 @@ else:
 
 fullset_model = SimpleCNN()
 fullset_optimizer = torch.optim.Adam(params=fullset_model.parameters(), lr=0.01)
-fullset_model = subset_train(fullset_model, dataloader=data_loader, optimizer=fullset_optimizer, epochs=50)
+fullset_model = subset_train(fullset_model, dataloader=fullset_loader, optimizer=fullset_optimizer, epochs=50)
 fullset_accuracy, fullset_class_accuracy = test(fullset_model)
 
 print("Accuracy on full dataset:", fullset_accuracy)
